@@ -24,7 +24,6 @@ import androidx.test.runner.AndroidJUnit4;
 
 import com.android.imsserviceentitlement.WfcActivationController.EntitlementResultCallback;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
-import com.android.imsserviceentitlement.utils.Executors;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -39,31 +38,31 @@ import java.lang.reflect.Field;
 @RunWith(AndroidJUnit4.class)
 public class EntitlementUtilsTest {
     @Rule public final MockitoRule rule = MockitoJUnit.rule();
-    @Mock private ImsEntitlementApi mMockImsEntitlementApi;
+    @Mock private WfcActivationApi mActivationApi;
     @Mock private EntitlementResultCallback mEntitlementResultCallback;
     @Mock private EntitlementResult mEntitlementResult;
 
     @Before
     public void setup() throws Exception {
-        Field field = Executors.class.getDeclaredField("sUseDirectExecutorForTest");
+        Field field = EntitlementUtils.class.getDeclaredField("useDirectExecutorForTest");
         field.setAccessible(true);
         field.set(null, true);
     }
 
     @Test
     public void entitlementCheck_checkEntitlementStatusPass_onEntitlementResult() {
-        when(mMockImsEntitlementApi.checkEntitlementStatus()).thenReturn(mEntitlementResult);
+        when(mActivationApi.checkEntitlementStatus()).thenReturn(mEntitlementResult);
 
-        EntitlementUtils.entitlementCheck(mMockImsEntitlementApi, mEntitlementResultCallback);
+        EntitlementUtils.entitlementCheck(mActivationApi, mEntitlementResultCallback);
 
         verify(mEntitlementResultCallback).onEntitlementResult(mEntitlementResult);
     }
 
     @Test
     public void entitlementCheck_checkEntitlementStatusWithRuntimeException_onFailure() {
-        when(mMockImsEntitlementApi.checkEntitlementStatus()).thenThrow(new RuntimeException());
+        when(mActivationApi.checkEntitlementStatus()).thenThrow(new RuntimeException());
 
-        EntitlementUtils.entitlementCheck(mMockImsEntitlementApi, mEntitlementResultCallback);
+        EntitlementUtils.entitlementCheck(mActivationApi, mEntitlementResultCallback);
 
         verify(mEntitlementResultCallback, never()).onEntitlementResult(mEntitlementResult);
     }
