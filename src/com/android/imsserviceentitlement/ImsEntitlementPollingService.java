@@ -42,15 +42,19 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.annotation.WorkerThread;
 
+import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
+import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration.ClientBehavior;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
 import com.android.imsserviceentitlement.job.JobManager;
 import com.android.imsserviceentitlement.utils.ImsUtils;
 import com.android.imsserviceentitlement.utils.TelephonyUtils;
 
+import java.time.Duration;
+
 /**
- * The {@link JobService} for querying entitlement status in the background.
- * The jobId is unique for different subId + job combination, so can run the same job for different
- * subIds w/o cancelling each others. See {@link JobManager}.
+ * The {@link JobService} for querying entitlement status in the background. The jobId is unique for
+ * different subId + job combination, so can run the same job for different subIds w/o cancelling
+ * each others. See {@link JobManager}.
  */
 public class ImsEntitlementPollingService extends JobService {
     private static final String TAG = "IMSSE-ImsEntitlementPollingService";
@@ -67,7 +71,8 @@ public class ImsEntitlementPollingService extends JobService {
      */
     private final SparseArray<EntitlementPollingTask> mTasks = new SparseArray<>();
 
-    @VisibleForTesting EntitlementPollingTask mOngoingTask;
+    @VisibleForTesting
+    EntitlementPollingTask mOngoingTask;
 
     @Override
     @VisibleForTesting
@@ -87,6 +92,15 @@ public class ImsEntitlementPollingService extends JobService {
                 COMPONENT_NAME,
                 subId)
                 .queryEntitlementStatusOnceNetworkReady(retryCount);
+    }
+
+    /** Enqueues a job to query entitlement status with delay. */
+    private static void enqueueJobWithDelay(Context context, int subId, long delayInSeconds) {
+        JobManager.getInstance(
+                context,
+                COMPONENT_NAME,
+                subId)
+                .queryEntitlementStatusOnceNetworkReady(0, Duration.ofSeconds(delayInSeconds));
     }
 
     @Override
@@ -185,6 +199,7 @@ public class ImsEntitlementPollingService extends JobService {
 
         private void doEntitlementCheck() {
             if (mNeedsImsProvisioning) {
+                // TODO(b/190476343): Unify EntitlementResult and EntitlementConfiguration.
                 doImsEntitlementCheck();
             } else {
                 doWfcEntitlementCheck();
@@ -196,6 +211,10 @@ public class ImsEntitlementPollingService extends JobService {
             try {
                 EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
                 Log.d(TAG, "Entitlement result: " + result);
+
+                if (performRetryIfNeeded(result)) {
+                    return;
+                }
 
                 if (shouldTurnOffWfc(result)) {
                     mImsUtils.setVowifiProvisioned(false);
@@ -226,6 +245,7 @@ public class ImsEntitlementPollingService extends JobService {
                 mSmsoipResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
                 Log.d(TAG, "checkEntitlementStatus failed.", e);
             }
+            checkVersValidity();
         }
 
         @WorkerThread
@@ -237,6 +257,11 @@ public class ImsEntitlementPollingService extends JobService {
             try {
                 EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
                 Log.d(TAG, "Entitlement result: " + result);
+
+                if (performRetryIfNeeded(result)) {
+                    return;
+                }
+
                 if (shouldTurnOffWfc(result)) {
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
                     mImsUtils.disableWfc();
@@ -250,8 +275,40 @@ public class ImsEntitlementPollingService extends JobService {
         }
 
         /**
-         * Returns {@code true} when {@code EntitlementResult} says WFC is not activated;
-         * Otherwise {@code false} if {@code EntitlementResult} is not of any known pattern.
+         * Performs retry if needed. Returns true if {@link ImsEntitlementPollingService} has
+         * scheduled.
+         */
+        private boolean performRetryIfNeeded(@Nullable EntitlementResult result) {
+            if (result == null || result.getRetryAfterSeconds() < 0) {
+                return false;
+            }
+            mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+            ImsEntitlementPollingService.enqueueJobWithDelay(
+                    ImsEntitlementPollingService.this,
+                    mSubid,
+                    result.getRetryAfterSeconds());
+            return true;
+        }
+
+        /**
+         * Schedules entitlement status check after a VERS.validity time, if the last valid is
+         * during validity.
+         */
+        private void checkVersValidity() {
+            EntitlementConfiguration lastEntitlementConfiguration =
+                    new EntitlementConfiguration(ImsEntitlementPollingService.this, mSubid);
+            if (lastEntitlementConfiguration.entitlementValidation()
+                    == ClientBehavior.VALID_DURING_VALIDITY) {
+                enqueueJobWithDelay(
+                        ImsEntitlementPollingService.this,
+                        mSubid,
+                        lastEntitlementConfiguration.getVersValidity());
+            }
+        }
+
+        /**
+         * Returns {@code true} when {@code EntitlementResult} says WFC is not activated; Otherwise
+         * {@code false} if {@code EntitlementResult} is not of any known pattern.
          */
         private boolean shouldTurnOffWfc(@Nullable EntitlementResult result) {
             if (result == null) {

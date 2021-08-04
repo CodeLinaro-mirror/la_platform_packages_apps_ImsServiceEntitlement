@@ -16,13 +16,18 @@
 
 package com.android.imsserviceentitlement;
 
+import static java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME;
+import static java.time.temporal.ChronoUnit.SECONDS;
+
 import android.content.Context;
+import android.text.TextUtils;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
+import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration.ClientBehavior;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
 import com.android.imsserviceentitlement.fcm.FcmTokenStore;
 import com.android.imsserviceentitlement.fcm.FcmUtils;
@@ -39,12 +44,19 @@ import com.android.libraries.entitlement.ServiceEntitlementException;
 import com.android.libraries.entitlement.ServiceEntitlementRequest;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.net.HttpHeaders;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 
 /** Implementation of the entitlement API. */
 public class ImsEntitlementApi {
     private static final String TAG = "IMSSE-ImsEntitlementApi";
 
+    private static final int RESPONSE_RETRY_AFTER = 503;
     private static final int RESPONSE_TOKEN_EXPIRED = 511;
+
     private static final int AUTHENTICATION_RETRIES = 1;
 
     private final Context mContext;
@@ -54,6 +66,9 @@ public class ImsEntitlementApi {
 
     private int mRetryFullAuthenticationCount = AUTHENTICATION_RETRIES;
     private boolean mNeedsImsProvisioning;
+
+    @VisibleForTesting
+    static Clock sClock = Clock.systemUTC();
 
     public ImsEntitlementApi(Context context, int subId) {
         this.mContext = context;
@@ -80,8 +95,8 @@ public class ImsEntitlementApi {
 
     /**
      * Returns WFC entitlement check result from carrier API (over network), or {@code null} on
-     * unrecoverable network issue or malformed server response. This is blocking call so should not
-     * be called on main thread.
+     * unrecoverable network issue or malformed server response. This is blocking call so should
+     * not be called on main thread.
      */
     @Nullable
     public EntitlementResult checkEntitlementStatus() {
@@ -96,6 +111,10 @@ public class ImsEntitlementApi {
         requestBuilder.setTerminalModel("modelY");
         requestBuilder.setTerminalSoftwareVersion("versionZ");
         requestBuilder.setAcceptContentType(ServiceEntitlementRequest.ACCEPT_CONTENT_TYPE_XML);
+        if (mNeedsImsProvisioning) {
+            mLastEntitlementConfiguration.getVersion().ifPresent(
+                    version -> requestBuilder.setConfigurationVersion(Integer.parseInt(version)));
+        }
         ServiceEntitlementRequest request = requestBuilder.build();
 
         XmlDoc entitlementXmlDoc = null;
@@ -114,41 +133,88 @@ public class ImsEntitlementApi {
             // Reset the retry count if no exception from queryEntitlementStatus()
             mRetryFullAuthenticationCount = AUTHENTICATION_RETRIES;
         } catch (ServiceEntitlementException e) {
-            if (e.getErrorCode()
-                    == ServiceEntitlementException.ERROR_HTTP_STATUS_NOT_SUCCESS
-                    && e.getHttpStatus() == RESPONSE_TOKEN_EXPIRED) {
-                if (mRetryFullAuthenticationCount <= 0) {
-                    Log.d(TAG, "Ran out of the retry count, stop query status.");
-                    return null;
+            if (e.getErrorCode() == ServiceEntitlementException.ERROR_HTTP_STATUS_NOT_SUCCESS) {
+                if (e.getHttpStatus() == RESPONSE_TOKEN_EXPIRED) {
+                    if (mRetryFullAuthenticationCount <= 0) {
+                        Log.d(TAG, "Ran out of the retry count, stop query status.");
+                        return null;
+                    }
+                    Log.d(TAG, "Server asking for full authentication, retry the query.");
+                    // Clean up the cached data and perform full authentication next query.
+                    mLastEntitlementConfiguration.reset();
+                    mRetryFullAuthenticationCount--;
+                    return checkEntitlementStatus();
+                } else if (e.getHttpStatus() == RESPONSE_RETRY_AFTER && !TextUtils.isEmpty(
+                        e.getRetryAfter())) {
+                    // For handling the case of HTTP_UNAVAILABLE(503), client would perform the
+                    // retry for the delay of Retry-After.
+                    Log.d(TAG, "Server asking for retry. retryAfter = " + e.getRetryAfter());
+                    return EntitlementResult
+                            .builder()
+                            .setRetryAfterSeconds(parseDelaySecondsByRetryAfter(e.getRetryAfter()))
+                            .build();
                 }
-                Log.d(TAG, "Server asking for full authentication, retry the query.");
-                // Clean up the cached data and perform full authentication next query.
-                mLastEntitlementConfiguration.reset();
-                mRetryFullAuthenticationCount--;
-                return checkEntitlementStatus();
             }
             Log.e(TAG, "queryEntitlementStatus failed", e);
         }
         return entitlementXmlDoc == null ? null : toEntitlementResult(entitlementXmlDoc);
     }
 
-    private static EntitlementResult toEntitlementResult(XmlDoc doc) {
-        EntitlementResult.Builder builder =
-                EntitlementResult.builder()
-                        .setVowifiStatus(Ts43VowifiStatus.builder(doc).build())
-                        .setVolteStatus(Ts43VolteStatus.builder(doc).build())
-                        .setSmsoveripStatus(Ts43SmsOverIpStatus.builder(doc).build());
-        doc.get(
-                ResponseXmlNode.APPLICATION,
-                ResponseXmlAttributes.SERVER_FLOW_URL,
-                ServiceEntitlement.APP_VOWIFI)
-                .ifPresent(url -> builder.setEmergencyAddressWebUrl(url));
-        doc.get(
-                ResponseXmlNode.APPLICATION,
-                ResponseXmlAttributes.SERVER_FLOW_USER_DATA,
-                ServiceEntitlement.APP_VOWIFI)
-                .ifPresent(userData -> builder.setEmergencyAddressWebData(userData));
+    /**
+     * Parses the value of {@link HttpHeaders#RETRY_AFTER}. The possible formats could be a numeric
+     * value in second, or a HTTP-date in RFC-1123 date-time format.
+     */
+    private long parseDelaySecondsByRetryAfter(String retryAfter) {
+        try {
+            return Long.parseLong(retryAfter);
+        } catch (NumberFormatException numberFormatException) {
+        }
+
+        try {
+            return SECONDS.between(
+                    Instant.now(sClock), RFC_1123_DATE_TIME.parse(retryAfter, Instant::from));
+        } catch (DateTimeParseException dateTimeParseException) {
+        }
+
+        Log.w(TAG, "Unable to parse retry-after: " + retryAfter + ", ignore it.");
+        return -1;
+    }
+
+    private EntitlementResult toEntitlementResult(XmlDoc doc) {
+        EntitlementResult.Builder builder = EntitlementResult.builder();
+        ClientBehavior clientBehavior = mLastEntitlementConfiguration.entitlementValidation();
+
+        if (mNeedsImsProvisioning && isResetToDefault(clientBehavior)) {
+            // keep the entitlement result in default value and reset the configs.
+            if (clientBehavior == ClientBehavior.NEEDS_TO_RESET
+                    || clientBehavior == ClientBehavior.UNKNOWN_BEHAVIOR) {
+                mLastEntitlementConfiguration.reset();
+            } else {
+                mLastEntitlementConfiguration.resetConfigsExceptVers();
+            }
+        } else {
+            builder.setVowifiStatus(Ts43VowifiStatus.builder(doc).build())
+                    .setVolteStatus(Ts43VolteStatus.builder(doc).build())
+                    .setSmsoveripStatus(Ts43SmsOverIpStatus.builder(doc).build());
+            doc.get(
+                    ResponseXmlNode.APPLICATION,
+                    ResponseXmlAttributes.SERVER_FLOW_URL,
+                    ServiceEntitlement.APP_VOWIFI)
+                    .ifPresent(url -> builder.setEmergencyAddressWebUrl(url));
+            doc.get(
+                    ResponseXmlNode.APPLICATION,
+                    ResponseXmlAttributes.SERVER_FLOW_USER_DATA,
+                    ServiceEntitlement.APP_VOWIFI)
+                    .ifPresent(userData -> builder.setEmergencyAddressWebData(userData));
+        }
         return builder.build();
+    }
+
+    private boolean isResetToDefault(ClientBehavior clientBehavior) {
+        return clientBehavior == ClientBehavior.UNKNOWN_BEHAVIOR
+                || clientBehavior == ClientBehavior.NEEDS_TO_RESET
+                || clientBehavior == ClientBehavior.NEEDS_TO_RESET_EXCEPT_VERS
+                || clientBehavior == ClientBehavior.NEEDS_TO_RESET_EXCEPT_VERS_UNTIL_SETTING_ON;
     }
 
     private CarrierConfig getCarrierConfig(Context context) {

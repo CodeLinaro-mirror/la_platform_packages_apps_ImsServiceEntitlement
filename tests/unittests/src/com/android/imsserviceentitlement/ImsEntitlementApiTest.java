@@ -53,6 +53,14 @@ import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import java.text.SimpleDateFormat;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
+
 @RunWith(AndroidJUnit4.class)
 public class ImsEntitlementApiTest {
     @Rule public final MockitoRule rule = MockitoJUnit.rule();
@@ -66,59 +74,59 @@ public class ImsEntitlementApiTest {
     private static final int SUB_ID = 1;
     private static final String FCM_TOKEN = "FCM_TOKEN";
     private static final String RAW_XML =
-            "<wap-provisioningdoc version=\"1.1\">\n"
-                    + "    <characteristic type=\"VERS\">\n"
-                    + "        <parm name=\"version\" value=\"1\"/>\n"
-                    + "        <parm name=\"validity\" value=\"1728000\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"TOKEN\">\n"
-                    + "        <parm name=\"token\" value=\"kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX\"/>\n"
-                    + "        <parm name=\"validity\" value=\"3600\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"APPLICATION\">\n"
-                    + "        <parm name=\"AppID\" value=\"ap2004\"/>\n"
-                    + "        <parm name=\"EntitlementStatus\" value=\"1\"/>\n"
-                    + "    </characteristic>\n"
-                    + "</wap-provisioningdoc>\n";
+            "<wap-provisioningdoc version=\"1.1\">"
+                    + "  <characteristic type=\"VERS\">"
+                    + "    <parm name=\"version\" value=\"1\"/>"
+                    + "    <parm name=\"validity\" value=\"1728000\"/>"
+                    + "  </characteristic>"
+                    + "  <characteristic type=\"TOKEN\">"
+                    + "    <parm name=\"token\" value=\"kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX\"/>"
+                    + "    <parm name=\"validity\" value=\"3600\"/>"
+                    + "  </characteristic>"
+                    + "  <characteristic type=\"APPLICATION\">"
+                    + "    <parm name=\"AppID\" value=\"ap2004\"/>"
+                    + "    <parm name=\"EntitlementStatus\" value=\"1\"/>"
+                    + "  </characteristic>"
+                    + "</wap-provisioningdoc>";
     private static final String RAW_XML_NEW_TOKEN =
-            "<wap-provisioningdoc version=\"1.1\">\n"
-                    + "    <characteristic type=\"VERS\">\n"
-                    + "        <parm name=\"version\" value=\"1\"/>\n"
-                    + "        <parm name=\"validity\" value=\"1728000\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"TOKEN\">\n"
-                    + "        <parm name=\"token\" value=\"NEW_TOKEN\"/>\n"
-                    + "        <parm name=\"validity\" value=\"3600\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"APPLICATION\">\n"
-                    + "        <parm name=\"AppID\" value=\"ap2004\"/>\n"
-                    + "        <parm name=\"EntitlementStatus\" value=\"1\"/>\n"
-                    + "    </characteristic>\n"
-                    + "</wap-provisioningdoc>\n";
+            "<wap-provisioningdoc version=\"1.1\">"
+                    + "  <characteristic type=\"VERS\">"
+                    + "    <parm name=\"version\" value=\"1\"/>"
+                    + "    <parm name=\"validity\" value=\"1728000\"/>"
+                    + "  </characteristic>"
+                    + "  <characteristic type=\"TOKEN\">"
+                    + "    <parm name=\"token\" value=\"NEW_TOKEN\"/>"
+                    + "    <parm name=\"validity\" value=\"3600\"/>"
+                    + "  </characteristic>\n"
+                    + "  <characteristic type=\"APPLICATION\">"
+                    + "    <parm name=\"AppID\" value=\"ap2004\"/>"
+                    + "    <parm name=\"EntitlementStatus\" value=\"1\"/>"
+                    + "  </characteristic>"
+                    + "</wap-provisioningdoc>";
 
     private static final String MULTIPLE_APPIDS_RAW_XML =
-            "<wap-provisioningdoc version=\"1.1\">\n"
-                    + "    <characteristic type=\"VERS\">\n"
-                    + "        <parm name=\"version\" value=\"1\"/>\n"
-                    + "        <parm name=\"validity\" value=\"1728000\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"TOKEN\">\n"
-                    + "        <parm name=\"token\" value=\"kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX\"/>\n"
-                    + "        <parm name=\"validity\" value=\"3600\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"APPLICATION\">\n"
-                    + "        <parm name=\"AppID\" value=\"ap2003\"/>\n"
-                    + "        <parm name=\"EntitlementStatus\" value=\"1\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"APPLICATION\">\n"
-                    + "        <parm name=\"AppID\" value=\"ap2004\"/>\n"
-                    + "        <parm name=\"EntitlementStatus\" value=\"1\"/>\n"
-                    + "    </characteristic>\n"
-                    + "    <characteristic type=\"APPLICATION\">\n"
-                    + "        <parm name=\"AppID\" value=\"ap2005\"/>\n"
-                    + "        <parm name=\"EntitlementStatus\" value=\"1\"/>\n"
-                    + "    </characteristic>\n"
-                    + "</wap-provisioningdoc>\n";
+            "<wap-provisioningdoc version=\"1.1\">"
+                    + "  <characteristic type=\"VERS\">"
+                    + "    <parm name=\"version\" value=\"1\"/>"
+                    + "    <parm name=\"validity\" value=\"1728000\"/>"
+                    + "  </characteristic>"
+                    + "  <characteristic type=\"TOKEN\">"
+                    + "    <parm name=\"token\" value=\"kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX\"/>"
+                    + "    <parm name=\"validity\" value=\"3600\"/>"
+                    + "  </characteristic>"
+                    + "  <characteristic type=\"APPLICATION\">"
+                    + "    <parm name=\"AppID\" value=\"ap2003\"/>"
+                    + "    <parm name=\"EntitlementStatus\" value=\"1\"/>"
+                    + "  </characteristic>\n"
+                    + "  <characteristic type=\"APPLICATION\">"
+                    + "    <parm name=\"AppID\" value=\"ap2004\"/>\n"
+                    + "    <parm name=\"EntitlementStatus\" value=\"1\"/>"
+                    + "  </characteristic>"
+                    + "  <characteristic type=\"APPLICATION\">"
+                    + "    <parm name=\"AppID\" value=\"ap2005\"/>"
+                    + "    <parm name=\"EntitlementStatus\" value=\"1\"/>"
+                    + "  </characteristic>"
+                    + "</wap-provisioningdoc>";
 
     private final EntitlementConfiguration mEntitlementConfiguration =
             new EntitlementConfiguration(ApplicationProvider.getApplicationContext(), SUB_ID);
@@ -239,6 +247,55 @@ public class ImsEntitlementApiTest {
         assertThat(mEntitlementConfiguration.getToken().get()).isEqualTo("NEW_TOKEN");
     }
 
+    @Test
+    public void checkEntitlementStatus_httpResponse503WithDateTime_returnsRetryAfter()
+            throws Exception {
+        setImsProvisioningBool(false);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        mEntitlementConfiguration.update(RAW_XML);
+        Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(0), ZoneOffset.UTC);
+        ImsEntitlementApi.sClock = fixedClock;
+
+        // While perform fast-authn, throws exception with code 503
+        when(mMockServiceEntitlement.queryEntitlementStatus(
+                ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
+                authenticationRequest("kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX")))
+                .thenThrow(
+                        new ServiceEntitlementException(
+                                ERROR_HTTP_STATUS_NOT_SUCCESS,
+                                503,
+                                getDateTimeAfter(120, fixedClock),
+                                "Invalid connection response"));
+
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+
+        assertThat(result).isNotNull();
+        assertThat(result.getRetryAfterSeconds()).isEqualTo(120);
+    }
+
+    @Test
+    public void checkEntitlementStatus_httpResponse503WithNumericValue_returnsRetryAfter()
+            throws Exception {
+        setImsProvisioningBool(false);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        mEntitlementConfiguration.update(RAW_XML);
+        // While perform fast-authn, throws exception with code 503
+        when(mMockServiceEntitlement.queryEntitlementStatus(
+                ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
+                authenticationRequest("kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX")))
+                .thenThrow(
+                        new ServiceEntitlementException(
+                                ERROR_HTTP_STATUS_NOT_SUCCESS,
+                                503,
+                                "120",
+                                "Invalid connection response"));
+
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+
+        assertThat(result).isNotNull();
+        assertThat(result.getRetryAfterSeconds()).isEqualTo(120);
+    }
+
     private ServiceEntitlementRequest authenticationRequest(String token) {
         ServiceEntitlementRequest.Builder requestBuilder = ServiceEntitlementRequest.builder();
         if (token != null) {
@@ -270,5 +327,12 @@ public class ImsEntitlementApiTest {
         when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(carrierConfig);
         when(mContext.getSystemService(CarrierConfigManager.class))
                 .thenReturn(mCarrierConfigManager);
+    }
+
+    private String getDateTimeAfter(long seconds, Clock fixedClock) {
+        SimpleDateFormat dateFormat = new SimpleDateFormat(
+                "EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
+        dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
+        return dateFormat.format(Date.from(fixedClock.instant().plusSeconds(seconds)));
     }
 }
